@@ -66,3 +66,9 @@ SET search_path TO yb_demo_schema;
 ```sql
 \dt
 ```
+
+### describe table
+
+```sql
+\d users
+```
