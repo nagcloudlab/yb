@@ -39,6 +39,9 @@ sudo systemctl stop redis
 ./bin/yb-ctl status
 ```
 
+Admin UI:
+http://<node-ip>:7000
+
 add new node to existing cluster
 
 ```bash
@@ -255,6 +258,7 @@ List Tablets of a Table
 
 ```bash
 ./bin/yb-admin --master_addresses <master_ip:port> list_tablets ysql.<keyspace_name> <table_name> 0
+./bin/yb-admin --master_addresses 127.0.0.1:7000 list_tablets ysql.testdb orders 0
 ```
 
 List Tablet Servers to See Node Distribution
@@ -280,74 +284,10 @@ http://<yb-master-ip>:7000
 
 Using yb_stats Extension for Deeper Insights
 
-```bash
+```sql
 CREATE EXTENSION yb_stats;
 SELECT * FROM yb_table_size('<table_name>');
 ```
-
-### Yugabyte data types
-
-1. Numeric Types
-   SMALLINT / INT2: 2-byte integer, range: -32,768 to 32,767.
-   INTEGER / INT / INT4: 4-byte integer, range: -2,147,483,648 to 2,147,483,647.
-   BIGINT / INT8: 8-byte integer, range: -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807.
-   SERIAL, BIGSERIAL: Auto-incrementing integer.
-   NUMERIC / DECIMAL: Exact numeric with user-defined precision and scale (e.g., NUMERIC(10, 2)).
-   REAL: 4-byte floating-point number.
-   DOUBLE PRECISION: 8-byte floating-point number.
-2. Character Types
-   CHAR(N) / CHARACTER(N): Fixed-length string of N characters.
-   VARCHAR(N) / CHARACTER VARYING(N): Variable-length string up to N characters.
-   TEXT: Variable-length string with no size limit.
-3. Boolean Type
-   BOOLEAN: Stores TRUE, FALSE, or NULL.
-4. Date/Time Types
-   DATE: Calendar date (year, month, day).
-   TIME [WITHOUT TIME ZONE]: Time of day (hour, minute, second).
-   TIMESTAMP [WITHOUT TIME ZONE]: Date and time (no timezone info).
-   TIMESTAMPTZ / TIMESTAMP WITH TIME ZONE: Date and time with timezone info.
-5. UUID Type
-   UUID: Universally unique identifier. Commonly used for generating unique keys across distributed systems.
-6. Binary Types
-   BYTEA: Stores binary strings, suitable for raw binary data.
-7. Array Type
-   ARRAY: Allows storing an array of a specified data type (e.g., INTEGER[] for an array of integers).
-8. JSON Types
-   JSON: Stores JSON data in text format.
-   JSONB: Stores JSON data in a binary format for more efficient processing.
-9. Geometric Types (PostGIS)
-   While YugabyteDB has limited support for these types, you may find:
-   POINT: A geometric point on a plane (x, y coordinates).
-   LINE, LSEG, BOX, CIRCLE: Other geometric shapes.
-
-10. Network Types
-    INET: Stores IPv4 and IPv6 host addresses.
-    CIDR: Stores network blocks of IPv4 and IPv6 addresses.
-
-11. Enumerated Types
-    ENUM: A user-defined type with a predefined set of values (e.g., CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');).
-
-12. Composite Types
-    Allows defining a new data type as a composite of multiple existing types (similar to creating a structured object).
-
-13. Range Types
-    INT4RANGE, INT8RANGE, NUMRANGE, TSRANGE, TSTZRANGE, DATERANGE: Allow storing a range of values, like date ranges or numeric ranges.
-
-14. Serial Types (Auto-increment)
-    SERIAL, BIGSERIAL: Auto-increment integer columns.
-
-15. HSTORE Type
-    HSTORE: Key-value pairs in a single column.
-
-16. Time Interval Type
-    INTERVAL: Represents a span of time (e.g., INTERVAL '3 days').
-
-17. TSVector and TSQuery
-    TSVECTOR: A document vector for full-text search.
-    TSQUERY: Represents a text search query.
-
-Compatibility with PostgreSQL
-YugabyteDB maintains compatibility with most PostgreSQL data types and functions. However, some advanced or less common types may have limited support or slightly different behavior.
 
 ### Indexes
 
@@ -386,7 +326,7 @@ BEGIN
                  WHEN i % 10 = 2 THEN 'Furniture'
                  WHEN i % 10 = 3 THEN 'Books'
                  ELSE 'Others' END,
-            ROUND(RANDOM() * 1000, 2),
+            ROUND(RANDOM() * 1000),
             CASE WHEN i % 2 = 0 THEN TRUE ELSE FALSE END
         );
     END LOOP;
@@ -478,3 +418,67 @@ Composite Index: Index on multiple columns to optimize queries filtering on more
 Unique Index: Ensures the values in the index are unique, adding a constraint to the column.
 Partial Index: An index that includes a subset of rows that meet a specific condition.
 Primary Key Index: The primary key column(s) automatically have an index in YugabyteDB.
+
+### Yugabyte data types
+
+1. Numeric Types
+   SMALLINT / INT2: 2-byte integer, range: -32,768 to 32,767.
+   INTEGER / INT / INT4: 4-byte integer, range: -2,147,483,648 to 2,147,483,647.
+   BIGINT / INT8: 8-byte integer, range: -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807.
+   SERIAL, BIGSERIAL: Auto-incrementing integer.
+   NUMERIC / DECIMAL: Exact numeric with user-defined precision and scale (e.g., NUMERIC(10, 2)).
+   REAL: 4-byte floating-point number.
+   DOUBLE PRECISION: 8-byte floating-point number.
+2. Character Types
+   CHAR(N) / CHARACTER(N): Fixed-length string of N characters.
+   VARCHAR(N) / CHARACTER VARYING(N): Variable-length string up to N characters.
+   TEXT: Variable-length string with no size limit.
+3. Boolean Type
+   BOOLEAN: Stores TRUE, FALSE, or NULL.
+4. Date/Time Types
+   DATE: Calendar date (year, month, day).
+   TIME [WITHOUT TIME ZONE]: Time of day (hour, minute, second).
+   TIMESTAMP [WITHOUT TIME ZONE]: Date and time (no timezone info).
+   TIMESTAMPTZ / TIMESTAMP WITH TIME ZONE: Date and time with timezone info.
+5. UUID Type
+   UUID: Universally unique identifier. Commonly used for generating unique keys across distributed systems.
+6. Binary Types
+   BYTEA: Stores binary strings, suitable for raw binary data.
+7. Array Type
+   ARRAY: Allows storing an array of a specified data type (e.g., INTEGER[] for an array of integers).
+8. JSON Types
+   JSON: Stores JSON data in text format.
+   JSONB: Stores JSON data in a binary format for more efficient processing.
+9. Geometric Types (PostGIS)
+   While YugabyteDB has limited support for these types, you may find:
+   POINT: A geometric point on a plane (x, y coordinates).
+   LINE, LSEG, BOX, CIRCLE: Other geometric shapes.
+
+10. Network Types
+    INET: Stores IPv4 and IPv6 host addresses.
+    CIDR: Stores network blocks of IPv4 and IPv6 addresses.
+
+11. Enumerated Types
+    ENUM: A user-defined type with a predefined set of values (e.g., CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');).
+
+12. Composite Types
+    Allows defining a new data type as a composite of multiple existing types (similar to creating a structured object).
+
+13. Range Types
+    INT4RANGE, INT8RANGE, NUMRANGE, TSRANGE, TSTZRANGE, DATERANGE: Allow storing a range of values, like date ranges or numeric ranges.
+
+14. Serial Types (Auto-increment)
+    SERIAL, BIGSERIAL: Auto-increment integer columns.
+
+15. HSTORE Type
+    HSTORE: Key-value pairs in a single column.
+
+16. Time Interval Type
+    INTERVAL: Represents a span of time (e.g., INTERVAL '3 days').
+
+17. TSVector and TSQuery
+    TSVECTOR: A document vector for full-text search.
+    TSQUERY: Represents a text search query.
+
+Compatibility with PostgreSQL
+YugabyteDB maintains compatibility with most PostgreSQL data types and functions. However, some advanced or less common types may have limited support or slightly different behavior.
