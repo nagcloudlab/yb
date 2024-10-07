@@ -1,3 +1,16 @@
+## option-1: single node yb cluster
+
+cd yugabyte-2.23.0.0
+./bin/post_install.sh
+./bin/yugabyted start
+./bin/yugabyted status
+./bin/ycqlsh -h
+
+admin UI
+http://127.0.0.1:7000/
+
+## option-2: yb-ctl ( multi-node yb cluster)
+
 sudo apt-get update
 sudo apt-get install python3
 
