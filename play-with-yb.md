@@ -1,4 +1,6 @@
-### deploy yugabyte cluster
+### deploy yugabyte cluster on ubuntu
+
+---
 
 Prerequisites:
 
@@ -20,7 +22,7 @@ tar xvfz yugabyte-2.23.0.0-b710-linux-x86_64.tar.gz
 cd yugabyte-2.23.0.0
 ```
 
-Start the cluster
+Deploy cluster
 
 way-1: ( single node )
 
@@ -36,13 +38,18 @@ way-2: ( multi node ) ( 3 nodes ) by yb-ctl
 ./bin/yb-ctl destroy
 sudo systemctl stop redis
 ./bin/yb-ctl create --rf 3 --master_flags "default_memory_limit_to_ram_ratio=0.05" --timeout-processes-running-sec 600
-./bin/yb-ctl status
 ```
 
-Admin UI:
-http://<node-ip>:7000
+1. Master UI
+   http://<master_ip>:7000
 
-add new node to existing cluster
+2. Tablet Server (TServer) UI
+   http://<tserver_ip>:9000
+
+3. Check All Nodes in the Cluster
+   ./bin/yb-ctl status
+
+add new-node (tserver) to cluster
 
 ```bash
 ./bin/yb-ctl add_node
@@ -52,14 +59,71 @@ add new node to existing cluster
 remove node from existing cluster
 
 ```bash
-./bin/yb-ctl remove_node  4
+./bin/yb-ctl remove_node  <node-index
 ```
 
-### connect to yugabyte cluster
+download prometheus and grafana
 
 ```bash
-./bin/ysqlsh -h 127.0.0.1 -p 5433
+wget https://github.com/prometheus/prometheus/releases/download/v3.0.0-beta.0/prometheus-3.0.0-beta.0.linux-amd64.tar.gz
+tar xvfz prometheus-3.0.0-beta.0.linux-amd64.tar.gz
+
+wget https://dl.grafana.com/enterprise/release/grafana-enterprise-11.2.2.linux-amd64.tar.gz
+tar -zxvf grafana-enterprise-11.2.2.linux-amd64.tar.gz
 ```
+
+update /path/to/prometheus/prometheus.yml
+
+```yml
+scrape_configs:
+  - job_name: "yugabyte-master"
+    metrics_path: "/prometheus-metrics"
+    static_configs:
+      - targets: ["127.0.0.1:7000", "127.0.0.2:7000", "127.0.0.3:7000"]
+
+  - job_name: "yugabyte-tserver"
+    metrics_path: "/prometheus-metrics"
+    static_configs:
+      - targets: ["127.0.0.1:9000", "127.0.0.2:9000", "127.0.0.3:9000"]
+```
+
+start prometheus
+
+```bash
+./prometheus --config.file=prometheus.yml
+```
+
+start grafana
+
+```bash
+cd /path/to/grafana
+./bin/grafana server
+```
+
+Grafana UI
+http://localhost:3000
+
+Add Prometheus as a data source in Grafana:
+
+1. Open Grafana in your browser.
+2. Log in with the default credentials (admin/admin).
+3. Click on the gear icon on the left sidebar to open the Configuration menu.
+4. Click on Data Sources.
+5. Click on Add data source.
+6. Select Prometheus from the list of data sources.
+7. In the URL field, enter http://localhost:9090.
+8. Click Save & Test to verify the connection.
+
+Import a dashboard in Grafana:
+
+1. Open Grafana in your browser.
+2. Log in with the default credentials (admin/admin).
+3. Click on the "+" icon on the left sidebar to open the Create menu.
+4. Click on Import.
+5. Enter the dashboard ID (e.g., 12620) in the Grafana.com Dashboard field.
+6. Click Load to load the dashboard.
+7. Select the Prometheus data source you added earlier.
+8. Click Import to import the dashboard.
 
 ### YSQL
 
@@ -210,84 +274,157 @@ Exiting ysqlsh
 \q
 ```
 
-### sharding
+### sharding in yugabyte ( data distribution )
 
 Sharding is a method for distributing data across multiple nodes in a cluster.
 
-Create a sharded table:
+Demonstrate Table and Sharding
+
+Creating a Table with Default Hash Sharding
 
 ```sql
-CREATE EXTENSION pgcrypto;
-CREATE TABLE orders (
-  order_id UUID DEFAULT gen_random_uuid(), -- Unique identifier for sharding
-  customer_id UUID NOT NULL,
-  order_date TIMESTAMP NOT NULL,
-  status TEXT NOT NULL,
-  shipping_address TEXT,
-  billing_address TEXT,
-  total_amount DECIMAL(10, 2),
-  currency CHAR(3),
-  payment_method TEXT,
-  shipped_date TIMESTAMP,
-  delivery_date TIMESTAMP,
-  is_gift BOOLEAN DEFAULT FALSE,
-  gift_message TEXT,
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW(),
-  PRIMARY KEY (order_id HASH) -- Sharding key
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE TABLE users (
+  user_id UUID DEFAULT gen_random_uuid(),
+  name TEXT,
+  email TEXT,
+  country TEXT,
+  signup_date TIMESTAMP DEFAULT NOW(),
+  PRIMARY KEY (user_id)
 );
 ```
 
-### insert data
+Here, user_id is the primary key, which will be used for sharding (hash partitioning by default).
 
-Insert data into a table:
+Insert Some Data Insert sample data into the table to observe distribution:
 
 ```sql
-INSERT INTO orders (customer_id, order_date, status, total_amount, currency, payment_method)
+INSERT INTO users (name, email, country)
+SELECT 'User ' || i, 'user' || i || '@example.com', CASE
+    WHEN i % 5 = 0 THEN 'USA'
+    WHEN i % 5 = 1 THEN 'India'
+    WHEN i % 5 = 2 THEN 'UK'
+    WHEN i % 5 = 3 THEN 'Canada'
+    ELSE 'Australia'
+END
+FROM generate_series(1, 1000) AS i;
+```
+
+This adds 1000 rows of sample data, distributed across different countries.
+
+Observe Data Distribution Across Shards You can see how the data is distributed by using yb-admin to list the tablets:
+
+```bash
+./bin/yb-admin --master_addresses 127.0.0.1:7100 list_tablets ysql.yugabyte users 0
+```
+
+Check the Row Hash Distribution in YSQL Within YSQL, you can use the yb_hash_code() function to see how rows are hashed and distributed:
+
+```sql
+SELECT yb_hash_code(user_id) AS hash_value, COUNT(*)
+FROM users
+GROUP BY hash_value
+ORDER BY hash_value;
+```
+
+Creating a Table with Explicit Range Partitioning
+
+Create a Range-Partitioned Table
+
+```sql
+CREATE TABLE orders (
+  order_id UUID DEFAULT gen_random_uuid(),
+  user_id UUID,
+  order_date TIMESTAMP DEFAULT NOW(),
+  total_amount DECIMAL(10, 2),
+  PRIMARY KEY (order_date, order_id) -- Include `order_date` in the primary key
+) PARTITION BY RANGE (order_date);
+```
+
+Add Partitions Based on Ranges You can define how data should be partitioned based on order_date:
+
+```sql
+CREATE TABLE orders_q1 PARTITION OF orders
+FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+
+CREATE TABLE orders_q2 PARTITION OF orders
+FOR VALUES FROM ('2024-04-01') TO ('2024-07-01');
+
+CREATE TABLE orders_q3 PARTITION OF orders
+FOR VALUES FROM ('2024-07-01') TO ('2024-10-01');
+
+CREATE TABLE orders_q4 PARTITION OF orders
+FOR VALUES FROM ('2024-10-01') TO ('2025-01-01');
+```
+
+This example creates quarterly partitions for the year 2024.
+Insert Sample Data and Observe Range Distribution Insert data into the table and check how it is distributed across partitions:
+
+```sql
+INSERT INTO orders (user_id, order_date, total_amount)
 VALUES
-  (gen_random_uuid(), NOW(), 'Processing', 100.00, 'USD', 'Credit Card'),
-  (gen_random_uuid(), NOW(), 'Shipped', 250.00, 'USD', 'PayPal'),
-  (gen_random_uuid(), NOW(), 'Delivered', 320.00, 'EUR', 'Bank Transfer');
+(gen_random_uuid(), '2024-01-15', 100.00),
+(gen_random_uuid(), '2024-05-20', 250.00),
+(gen_random_uuid(), '2024-08-10', 320.00);
 ```
 
-### query data
-
-see data distribution:
-
-List Tablets of a Table
-
-```bash
-./bin/yb-admin --master_addresses <master_ip:port> list_tablets ysql.<keyspace_name> <table_name> 0
-./bin/yb-admin --master_addresses 127.0.0.1:7000 list_tablets ysql.testdb orders 0
-```
-
-List Tablet Servers to See Node Distribution
-
-```bash
-./bin/yb-admin --master_addresses <master_ip:port> list_tablet_servers
-```
-
-Use ysqlsh to See Row Hash Distribution
+To see the partitions:
 
 ```sql
-SELECT yb_hash_code(order_id), COUNT(*)
-FROM orders
-GROUP BY yb_hash_code(order_id)
-ORDER BY yb_hash_code(order_id);
+SELECT inhrelid::regclass AS partition_name
+FROM pg_inherits
+WHERE inhparent = 'orders'::regclass;
 ```
 
-YugabyteDB's Web UI (Yugaware or Yugabyte Platform)
+This query lists the partitions created for the orders table.
 
-```bash
-http://<yb-master-ip>:7000
-```
+Using Composite/Hybrid Partitioning
+You can also combine hash and range partitioning for a more sophisticated sharding approach.
 
-Using yb_stats Extension for Deeper Insights
+Create a Table with Hybrid Partitioning
 
 ```sql
-CREATE EXTENSION yb_stats;
-SELECT * FROM yb_table_size('<table_name>');
+CREATE TABLE transactions (
+  transaction_id UUID DEFAULT gen_random_uuid(),
+  user_id UUID,
+  transaction_date TIMESTAMP DEFAULT NOW(),
+  amount DECIMAL(10, 2),
+  PRIMARY KEY (transaction_date, transaction_id)
+) PARTITION BY RANGE (transaction_date);
+
+CREATE TABLE transactions_q1 PARTITION OF transactions
+FOR VALUES FROM ('2024-01-01') TO ('2024-04-01');
+
+CREATE TABLE transactions_q2 PARTITION OF transactions
+FOR VALUES FROM ('2024-04-01') TO ('2024-07-01');
+
+CREATE TABLE transactions_q3 PARTITION OF transactions
+FOR VALUES FROM ('2024-07-01') TO ('2024-10-01');
+
+CREATE TABLE transactions_q4 PARTITION OF transactions
+FOR VALUES FROM ('2024-10-01') TO ('2025-01-01');
 ```
+
+Insert Sample Data and Observe Hybrid Distribution Insert data into the table and check how it is distributed across partitions:
+
+```sql
+DO $$
+DECLARE
+    i INTEGER;
+BEGIN
+    FOR i IN 1..1000000 LOOP
+        INSERT INTO transactions (user_id, transaction_date, amount)
+        VALUES (
+            gen_random_uuid(),
+            ('2024-' || LPAD((1 + (i % 12))::TEXT, 2, '0') || '-' || LPAD((1 + (i % 28))::TEXT, 2, '0') || ' ' ||
+             LPAD((i % 24)::TEXT, 2, '0') || ':' || LPAD((i % 60)::TEXT, 2, '0') || ':' || LPAD((i % 60)::TEXT, 2, '0'))::TIMESTAMP, -- Properly formatted timestamp
+            ROUND(RANDOM() * 1000) -- Random amount
+        );
+    END LOOP;
+END $$;
+```
+
+https://nagcloudlab.notion.site/How-many-shards-per-table-1185bab9bf8780a7b509dfc29e0e2482?pvs=4
 
 ### Indexes
 
@@ -297,6 +434,7 @@ First, let's create a table called products with a million records to simulate a
 scenario.
 
 ```sql
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE products (
 product_id UUID DEFAULT gen_random_uuid(),
 name TEXT,
@@ -340,13 +478,31 @@ Try running a query that will scan the table without any indexing:
 
 ```sql
 EXPLAIN ANALYZE
-SELECT \* FROM products WHERE category = 'Electronics' AND price > 500;
+SELECT * FROM products WHERE category = 'Electronics' AND price > 500;
 ```
 
-This query will likely perform a full table scan since no index exists on category or price.
-Observe the query performance and execution time.
+Query Plan Summary
 
-Step 3: Create Indexes in YugabyteDB
+Sequential Scan (Seq Scan): Scans all rows of products table, as no index is used.
+Estimated Cost & Rows:
+cost=0.00..105.00: Estimated execution cost.
+rows=1000: Expected rows to match the filter (estimate).
+Actual Execution Time & Rows:
+78.624..586.595 ms: Time to start returning rows and complete the scan.
+49618 rows: Actual rows returned.
+Storage Filter:
+Conditions: price > 500 and category = 'Electronics'.
+Planning Time: 2.629 ms to plan the query execution.
+Execution Time: 596.487 ms to execute and return all rows.
+Peak Memory Usage: 24 kB, indicating low memory use.
+Performance Issue
+
+Seq Scan is slow due to lack of indexes on category or price.
+
+Improvement Suggestions
+Add Indexes on category or a composite index on category and price to optimize performance.
+
+Create Indexes in YugabyteDB
 
 YugabyteDB supports various indexing types that enhance query performance by avoiding full table scans. Let's explore some common types:
 
@@ -361,12 +517,12 @@ Re-run the query:
 
 ```sql
 EXPLAIN ANALYZE
-SELECT \* FROM products WHERE category = 'Electronics' AND price > 500;
+SELECT * FROM products WHERE category = 'Electronics' AND price > 500;
 ```
 
 Notice that the query now uses the index on category, which should improve performance compared to the full table scan.
 
-B. Composite Index (Multi-Column)
+Composite Index (Multi-Column)
 
 For queries that filter by multiple columns, a composite index can be helpful. Create an index on both category and price:
 
@@ -378,12 +534,12 @@ Re-run the query:
 
 ```sql
 EXPLAIN ANALYZE
-SELECT \* FROM products WHERE category = 'Electronics' AND price > 500;
+SELECT * FROM products WHERE category = 'Electronics' AND price > 500;
 ```
 
 The composite index will further optimize the query by indexing both category and price.
 
-C. Unique Index
+Unique Index
 Create a unique index to ensure no duplicate values for a column, often used for columns like email, product codes, etc.
 
 ```sql
@@ -392,7 +548,7 @@ CREATE UNIQUE INDEX idx_unique_name ON products (name);
 
 This index enforces uniqueness on the name column.
 
-D. Partial Index
+Partial Index
 If queries only filter on a subset of the data, a partial index can be more efficient.
 
 ```sql
@@ -405,80 +561,197 @@ Re-run a query:
 
 ```sql
 EXPLAIN ANALYZE
-SELECT \* FROM products WHERE in_stock = TRUE AND price > 500;
+SELECT * FROM products WHERE in_stock = TRUE AND price > 500;
 ```
 
-Step 4: Understanding Index Performance
+Understanding Index Performance
 Index Scan vs. Sequential Scan: The EXPLAIN ANALYZE output will show whether an index scan (faster) or sequential scan (slower) was used.
 Execution Time: Measure how the query performance improves after adding indexes, especially for large tables.
-Query Plan Details: Look for terms like Index Scan and Bitmap Index Scan in the EXPLAIN ANALYZE output to verify the index usage.
-Step 5: Types of Indexes in YugabyteDB
+
+Types of Indexes in YugabyteDB
 Single-Column Index: Index on a single column to speed up queries that filter by that column.
 Composite Index: Index on multiple columns to optimize queries filtering on more than one column.
 Unique Index: Ensures the values in the index are unique, adding a constraint to the column.
 Partial Index: An index that includes a subset of rows that meet a specific condition.
 Primary Key Index: The primary key column(s) automatically have an index in YugabyteDB.
 
-### Yugabyte data types
+covering index
 
-1. Numeric Types
-   SMALLINT / INT2: 2-byte integer, range: -32,768 to 32,767.
-   INTEGER / INT / INT4: 4-byte integer, range: -2,147,483,648 to 2,147,483,647.
-   BIGINT / INT8: 8-byte integer, range: -9,223,372,036,854,775,808 to 9,223,372,036,854,775,807.
-   SERIAL, BIGSERIAL: Auto-incrementing integer.
-   NUMERIC / DECIMAL: Exact numeric with user-defined precision and scale (e.g., NUMERIC(10, 2)).
-   REAL: 4-byte floating-point number.
-   DOUBLE PRECISION: 8-byte floating-point number.
-2. Character Types
-   CHAR(N) / CHARACTER(N): Fixed-length string of N characters.
-   VARCHAR(N) / CHARACTER VARYING(N): Variable-length string up to N characters.
-   TEXT: Variable-length string with no size limit.
-3. Boolean Type
-   BOOLEAN: Stores TRUE, FALSE, or NULL.
-4. Date/Time Types
-   DATE: Calendar date (year, month, day).
-   TIME [WITHOUT TIME ZONE]: Time of day (hour, minute, second).
-   TIMESTAMP [WITHOUT TIME ZONE]: Date and time (no timezone info).
-   TIMESTAMPTZ / TIMESTAMP WITH TIME ZONE: Date and time with timezone info.
-5. UUID Type
-   UUID: Universally unique identifier. Commonly used for generating unique keys across distributed systems.
-6. Binary Types
-   BYTEA: Stores binary strings, suitable for raw binary data.
-7. Array Type
-   ARRAY: Allows storing an array of a specified data type (e.g., INTEGER[] for an array of integers).
-8. JSON Types
-   JSON: Stores JSON data in text format.
-   JSONB: Stores JSON data in a binary format for more efficient processing.
-9. Geometric Types (PostGIS)
-   While YugabyteDB has limited support for these types, you may find:
-   POINT: A geometric point on a plane (x, y coordinates).
-   LINE, LSEG, BOX, CIRCLE: Other geometric shapes.
+```sql
+SELECT name, category, price FROM products WHERE category = 'Electronics' AND price > 500;
+CREATE INDEX idx_category_price_covering ON products (category, price) INCLUDE (name);
 
-10. Network Types
-    INET: Stores IPv4 and IPv6 host addresses.
-    CIDR: Stores network blocks of IPv4 and IPv6 addresses.
+```
 
-11. Enumerated Types
-    ENUM: A user-defined type with a predefined set of values (e.g., CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');).
+expression index
 
-12. Composite Types
-    Allows defining a new data type as a composite of multiple existing types (similar to creating a structured object).
+```sql
+SELECT * FROM products WHERE LOWER(category) = 'electronics';
+CREATE INDEX idx_category_lower ON products (LOWER(category));
+```
 
-13. Range Types
-    INT4RANGE, INT8RANGE, NUMRANGE, TSRANGE, TSTZRANGE, DATERANGE: Allow storing a range of values, like date ranges or numeric ranges.
+### Transactions
 
-14. Serial Types (Auto-increment)
-    SERIAL, BIGSERIAL: Auto-increment integer columns.
+A transaction is a sequence of operations that are treated as a single unit of work. In YugabyteDB, transactions ensure data consistency and integrity.
 
-15. HSTORE Type
-    HSTORE: Key-value pairs in a single column.
+ACID Properties of Transactions
 
-16. Time Interval Type
-    INTERVAL: Represents a span of time (e.g., INTERVAL '3 days').
+Atomicity: All operations in a transaction are treated as a single unit. If any operation fails, the entire transaction is rolled back.
+Consistency: Transactions move the database from one consistent state to another. Constraints are enforced to maintain data integrity.
+Isolation: Transactions are isolated from each other to prevent interference. Each transaction sees a consistent snapshot of the data.
+Durability: Once a transaction is committed, its changes are permanent and survive system failures.
 
-17. TSVector and TSQuery
-    TSVECTOR: A document vector for full-text search.
-    TSQUERY: Represents a text search query.
+Transaction Commands in YugabyteDB
 
-Compatibility with PostgreSQL
-YugabyteDB maintains compatibility with most PostgreSQL data types and functions. However, some advanced or less common types may have limited support or slightly different behavior.
+BEGIN: Start a new transaction block.
+COMMIT: Save the transaction changes to the database.
+ROLLBACK: Discard the transaction changes and undo any modifications.
+SAVEPOINT: Set a named point within a transaction to allow partial rollback.
+RELEASE SAVEPOINT: Remove a savepoint from the transaction.
+ROLLBACK TO SAVEPOINT: Roll back to a specific savepoint within the transaction.
+
+how to achieve Atomicity in yugabyte ?
+
+- Use BEGIN and COMMIT/ROLLBACK commands to group operations into a transaction.
+- Ensure that all operations in a transaction succeed or fail together.
+- Use SAVEPOINT to create intermediate points for partial rollback.
+- Use ROLLBACK TO SAVEPOINT to undo changes up to a specific point.
+- Use transactions to maintain data consistency and integrity.
+
+Example: Atomicity in Transactions
+
+Suppose you have two tables, orders and order_items, and you want to insert data into both tables as part of a single transaction.
+
+```sql
+
+CREATE TABLE bank_accounts (
+    account_id UUID PRIMARY KEY,
+    account_name TEXT,
+    balance DECIMAL(10, 2)
+);
+```
+
+Insert Sample Data
+
+```sql
+INSERT INTO bank_accounts (account_id, account_name, balance)
+VALUES
+('a0f7b3b4-0b3b-4b1b-8b1b-0b3b4b1b8b1b', 'Account A', 1000.00),
+('b0f7b3b4-0b3b-4b1b-8b1b-0b3b4b1b8b1b', 'Account B', 500.00);
+```
+
+```sql
+BEGIN;
+
+-- Deduct $100 from Account A
+UPDATE bank_accounts
+SET balance = balance - 100
+WHERE account_name = 'Account A';
+
+-- Add $100 to Account B
+UPDATE bank_accounts
+SET balance = balance + 100
+WHERE account_name = 'Account B';
+
+COMMIT;
+-- ROLLBACK;
+
+```
+
+use savepoint
+
+```sql
+BEGIN;
+
+-- Deduct $100 from Account A
+UPDATE bank_accounts
+SET balance = balance - 100
+WHERE account_name = 'Account A';
+
+SAVEPOINT deduct_complete;
+
+-- Try adding $100 to Account B
+UPDATE bank_accounts
+SET balance = balance + 100
+WHERE account_name = 'Account B';
+
+-- If the above update fails, rollback to the savepoint
+ROLLBACK TO SAVEPOINT deduct_complete;
+
+-- Otherwise, commit the transaction
+COMMIT;
+```
+
+YugabyteDB Transaction Overview
+
+Consensus & Replication: Uses Raft for data consistency; replication across nodes based on RF.
+Transaction Manager & 2PC: Manages transactions with a Two-Phase Commit, ensuring either full commit or rollback.
+Transaction Flow: BEGIN ➔ Execute Operations ➔ Prepare Phase ➔ Commit/Rollback Phase ➔ Resolve Write Intents.
+
+how to achieve Consistency in yugabyte ?
+
+- Use constraints (primary key, foreign key, unique) to enforce data integrity.
+- Use transactions to maintain data consistency and atomicity.
+- Use indexes to optimize queries and ensure data integrity.
+
+how to achieve Isolation in yugabyte ?
+
+common concurrency issues
+
+- Dirty Reads: Reading uncommitted data from another transaction.
+- Non-Repeatable Reads: Reading different values for the same row in a transaction.
+- Phantom Reads: Reading new rows or missing rows in a transaction.
+- Lost Updates: Overwriting changes made by another transaction.
+- Write Skew: Concurrent writes that violate constraints.
+- Deadlocks: Transactions waiting for each other to release locks.
+- Starvation: Transactions waiting indefinitely due to resource contention.
+
+solution
+
+- Use isolation levels to control the visibility of data changes.
+- Use locks to prevent concurrent access to the same data.
+- Use transactions to ensure data consistency and integrity.
+
+Isolation Levels in YugabyteDB
+
+Read Uncommitted: Allows dirty reads, non-repeatable reads, and phantom reads.
+Read Committed: Prevents dirty reads but allows non-repeatable reads and phantom reads.
+Repeatable Read: Prevents dirty reads and non-repeatable reads but allows phantom reads.
+Serializable: Prevents dirty reads, non-repeatable reads, phantom reads, and write skew.
+Snapshot Isolation: Prevents dirty reads, non-repeatable reads, phantom reads, and write skew.
+
+how to configure isolation level in yugabyte ?
+
+how to see current isolation level in yugabyte ?
+
+```sql
+SHOW default_transaction_isolation;
+```
+
+```sql
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+```
+
+https://nagcloudlab.notion.site/Isolation-Levels-1185bab9bf8780c0acdfc2c45ffc2e54?pvs=4
+
+how to achieve Durability in yugabyte ?
+
+- Use WAL (Write-Ahead Logging) to ensure changes are written to disk before committing.
+- Use replication to maintain multiple copies of data across nodes.
+- Use backups and snapshots to recover data in case of failures.
+
+---
+
+### YCQL
+
+YugabyteDB supports multiple APIs, including YCQL (Yugabyte CQL), which is compatible with Apache Cassandra's CQL (Cassandra Query Language).
+
+YCQL Shell (ycqlsh)
+
+ycqlsh is the command-line shell for YugabyteDB's YCQL API, which is compatible with Apache Cassandra's CQL.
+
+Connect to a node:
+
+```bash
+./bin/ycqlsh
+```
