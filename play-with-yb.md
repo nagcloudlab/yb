@@ -1,3 +1,9 @@
+```bash
+git clone http://github.com/nagcloudlab/yb
+cd yb
+code .
+```
+
 ### deploy yugabyte cluster on ubuntu
 
 ---
@@ -315,7 +321,7 @@ This adds 1000 rows of sample data, distributed across different countries.
 Observe Data Distribution Across Shards You can see how the data is distributed by using yb-admin to list the tablets:
 
 ```bash
-./bin/yb-admin --master_addresses 127.0.0.1:7100 list_tablets ysql.yugabyte users 0
+./bin/yb-admin --master_addresses 127.0.0.1:7100 list_tablets ysql.testdb users 0
 ```
 
 Check the Row Hash Distribution in YSQL Within YSQL, you can use the yb_hash_code() function to see how rows are hashed and distributed:
@@ -586,7 +592,7 @@ CREATE INDEX idx_category_price_covering ON products (category, price) INCLUDE (
 expression index
 
 ```sql
-SELECT * FROM products WHERE LOWER(category) = 'electronics';
+SELECT * FROM products WHERE category = 'electronics';
 CREATE INDEX idx_category_lower ON products (LOWER(category));
 ```
 
@@ -729,7 +735,7 @@ SHOW default_transaction_isolation;
 ```
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
 ```
 
 https://nagcloudlab.notion.site/Isolation-Levels-1185bab9bf8780c0acdfc2c45ffc2e54?pvs=4
