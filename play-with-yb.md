@@ -735,7 +735,7 @@ SHOW default_transaction_isolation;
 ```
 
 ```sql
-SET TRANSACTION ISOLATION LEVEL SNAPSHOT;
+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
 ```
 
 https://nagcloudlab.notion.site/Isolation-Levels-1185bab9bf8780c0acdfc2c45ffc2e54?pvs=4
@@ -761,3 +761,5 @@ Connect to a node:
 ```bash
 ./bin/ycqlsh
 ```
+
+https://nagcloudlab.notion.site/YCQL-1195bab9bf87805698c6f91b15e5cc2c?pvs=4
