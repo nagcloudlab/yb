@@ -70,7 +70,7 @@ def simulate_reads(keys, retries=3):
     print(f"Read {read_count}/{len(keys)} rows successfully.")
 
 # Configuration for simulation
-num_operations = 10000  # Number of insert-read operations to perform
+num_operations = 100000  # Number of insert-read operations to perform
 
 # Generate keys
 primary_keys = generate_keys(num_operations)

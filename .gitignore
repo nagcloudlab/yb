@@ -26,3 +26,5 @@ replay_pid*
 yugabyte-2.23.0.0/
 prometheus-3.0.0/
 grafana-v11.2.2/
+
+yb-admin/
